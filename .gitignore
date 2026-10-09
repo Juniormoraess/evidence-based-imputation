@@ -1,0 +1,28 @@
+# Ambientes Virtuais e Caches
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Variáveis de Ambiente e Segurança
+.env
+*.pem
+*.key
+
+# IDEs e Ferramentas
+.vscode/
+.idea/
+.cursor/workspace/
+
+# Dados e Notebooks (Evita subir os PDFs pesados para o GitHub)
+data/raw/*
+!data/raw/.gitkeep
+data/ground_truth/*
+!data/ground_truth/.gitkeep
+.ipynb_checkpoints/
+
+# Saídas e Relatórios
+reports/*
+!reports/.gitkeep

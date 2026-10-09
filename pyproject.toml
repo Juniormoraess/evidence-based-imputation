@@ -1,0 +1,25 @@
+[project]
+name = "evidence-based-imputation"
+version = "0.1.0"
+description = "Framework de Imputação Baseada em Evidências usando Raw-RAG e PostgreSQL"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg2-binary>=2.9.0",  # Conexão com o PostgreSQL
+    "pgvector>=0.2.0",         # Suporte ao banco vetorial no Postgres
+    "pydantic>=2.0.0",         # Validação rigorosa dos dados extraídos pela LLM
+    "openai>=1.0.0",           # Cliente oficial (API do Deepseek é compatível com OpenAI)
+    "python-dotenv>=1.0.0",    # Carregamento seguro do arquivo .env
+    "pandas>=2.0.0",           # Manipulação do Data Warehouse em memória e ground truth
+    "PyMuPDF>=1.23.0",         # Leitura rápida e eficiente de PDFs (ingestão)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.10.0",     # Essencial para simular (mockar) a API da LLM nos testes
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
