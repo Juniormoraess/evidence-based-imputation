@@ -9,8 +9,8 @@ A IA assistente DEVE respeitar rigorosamente as seguintes escolhas, não sugerin
 * **Linguagem:** Python 3.10+ (Scripts modulares, sem frameworks pesados de orquestração como Airflow).
 * **Banco de Dados:** PostgreSQL local com a extensão `pgvector`. O Postgres atuará simultaneamente como Data Warehouse e Vector DB.
 * **Modelos de IA:**
-  * **LLM:** Deepseek V4 (via API).
-  * **Embedding:** A ser definido no módulo de ingestão (modelos leves e locais).
+  * **LLM (Geração/Extração):** DeepSeek V4 (via API compatível com SDK `openai`).
+  * **Embedding:** OpenAI `text-embedding-3-small` (1536 dimensões, via API usando SDK `openai`).
 * **Validação:** `Pydantic` será usado para forçar a saída estruturada da LLM.
 * **Testes:** `pytest` como framework padrão.
 
