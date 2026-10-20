@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: cj.m9090
       POSTGRES_DB: evidence_db
     ports:
-      - "5432:5432" # Se a porta 5432 já estiver em uso pelo seu Postgres local, mude para "5433:5432"
+      - "5439:5432" 
     volumes:
       - pgdata:/var/lib/postgresql/data
 
