@@ -80,11 +80,11 @@ def validate_required_api_keys() -> tuple[str, str]:
     return deepseek_model.strip(), embedding_model.strip()
 
 
-def main(top_k: int = 5) -> int:
+def main(top_k: int = 12) -> int:
     """Ponto de entrada principal para execução do pipeline de imputação.
 
     Args:
-        top_k: Quantidade de evidências recuperadas por tarefa de imputação (default: 5).
+        top_k: Quantidade de evidências recuperadas por tarefa de imputação (default: 12).
 
     Returns:
         Código de saída do processo (0 para sucesso, 1 para erro de configuração ou execução).

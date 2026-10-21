@@ -31,16 +31,25 @@ def _format_report_date(raw_date: date | datetime | str | None) -> str | None:
 
 
 def _build_query_text(task: ImputationTask) -> str:
-    """Constrói uma string de busca semântica rica combinando target_column, charity_name e report_date."""
+    """Constrói uma string de busca semântica rica combinando vocabulário contábil britânico, charity_name e report_date."""
     if task.target_column == TARGET_INCOME_COLUMN:
-        metric_phrase = "Total annual income in British pounds (£) financial statement"
+        metric_phrase = (
+            "Total annual income in British pounds (£) financial statement "
+            "Statement of Financial Activities SOFA Profit and Loss Receipts and Payments "
+            "Total Income Total incoming resources Total gross income unrestricted restricted funds"
+        )
     elif task.target_column == TARGET_SPENDING_COLUMN:
         metric_phrase = (
-            "Total annual spending and expenditure in British pounds (£) financial statement"
+            "Total annual spending and expenditure in British pounds (£) financial statement "
+            "Statement of Financial Activities SOFA Profit and Loss Receipts and Payments "
+            "Total Expenditure Total Expense Total resources expended charitable activities"
         )
     else:
         readable_col = task.target_column.replace("_", " ")
-        metric_phrase = f"Financial report {readable_col} in British pounds (£) financial statement"
+        metric_phrase = (
+            f"Financial report {readable_col} in British pounds (£) financial statement "
+            "Statement of Financial Activities SOFA Profit and Loss Receipts and Payments"
+        )
 
     parts: list[str] = [metric_phrase]
 
@@ -183,18 +192,24 @@ def fetch_evidence(
     task: ImputationTask,
     query_embedding: list[float],
     db_connection_string: str,
-    top_k: int = 5,
+    top_k: int = 12,
 ) -> list[RetrievedEvidence]:
     """Executa busca híbrida (Hard Filtering por document_id + similaridade de cosseno) no PostgreSQL.
+
+    Aplica Expansão de Página Completa (Full-Page Context Expansion): para todas as páginas
+    (page_number) presentes nos top_k fragmentos recuperados pela busca vetorial, busca todos
+    os fragmentos pertencentes àquelas mesmas páginas dentro do mesmo documento (tanto
+    chunk_index anteriores quanto posteriores), ordenando o resultado final por
+    (page_number, chunk_index).
 
     Args:
         task: Tarefa de imputação contendo o document_id alvo.
         query_embedding: Vetor de embedding da query semântica.
         db_connection_string: String de conexão (DSN/URI) para o PostgreSQL.
-        top_k: Quantidade máxima de fragmentos mais relevantes a retornar (default: 5).
+        top_k: Quantidade máxima de fragmentos base mais relevantes a buscar (default: 12).
 
     Returns:
-        Lista de objetos RetrievedEvidence ordenados por maior similaridade.
+        Lista de objetos RetrievedEvidence ordenados por (page_number, chunk_index).
         Retorna lista vazia se o document_id não possuir chunks na base.
 
     Raises:
@@ -209,16 +224,39 @@ def fetch_evidence(
         raise ValueError("O parâmetro 'top_k' deve ser maior que zero.")
 
     search_sql = """
+        WITH top_chunks AS (
+            SELECT
+                document_id,
+                page_number,
+                chunk_index,
+                text_content,
+                1 - (embedding <=> %s::vector) AS similarity_score
+            FROM knowledge_base
+            WHERE document_id = %s
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+        ),
+        matched_pages AS (
+            SELECT DISTINCT
+                document_id,
+                page_number
+            FROM top_chunks
+        )
         SELECT
-            document_id,
-            page_number,
-            chunk_index,
-            text_content,
-            1 - (embedding <=> %s::vector) AS similarity_score
-        FROM knowledge_base
-        WHERE document_id = %s
-        ORDER BY embedding <=> %s::vector
-        LIMIT %s
+            kb.document_id,
+            kb.page_number,
+            kb.chunk_index,
+            kb.text_content,
+            COALESCE(tc.similarity_score, 0.0) AS similarity_score
+        FROM knowledge_base kb
+        JOIN matched_pages mp
+          ON kb.document_id = mp.document_id
+         AND kb.page_number = mp.page_number
+        LEFT JOIN top_chunks tc
+          ON kb.document_id = tc.document_id
+         AND kb.page_number = tc.page_number
+         AND kb.chunk_index = tc.chunk_index
+        ORDER BY kb.page_number ASC, kb.chunk_index ASC
     """
 
     try:
@@ -249,6 +287,7 @@ def fetch_evidence(
             for doc_id, page_number, chunk_index, text_content, similarity_score in rows
         ]
 
+        evidences.sort(key=lambda ev: (ev.page_number, ev.chunk_index))
         return evidences
     except Exception as exc:
         logger.error(

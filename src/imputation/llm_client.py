@@ -17,12 +17,34 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 
 COLUMN_DESCRIPTIONS: dict[str, str] = {
     "income_annually_in_british_pounds": (
-        "Total annual income / total incoming resources in British pounds (£ / GBP)"
+        "Total annual income / total incoming resources / total gross income in British pounds (£ / GBP)"
     ),
     "spending_annually_in_british_pounds": (
-        "Total annual spending / total expenditure / resources expended in British pounds (£ / GBP)"
+        "Total annual spending / total expenditure / total expense / total resources expended in British pounds (£ / GBP)"
     ),
 }
+
+SYSTEM_AUDITING_PROMPT = (
+    "You are a senior UK charity financial auditor and deterministic data extraction assistant.\n"
+    "You output strictly valid JSON matching the requested schema and adhere to these 3 mandatory accounting rules:\n"
+    "1. REGRA 1 (Hierarquia Contábil / Accounting Hierarchy): Always prioritize figures extracted from formal "
+    "financial statement tables (Statement of Financial Activities / SOFA, Profit & Loss Statement, "
+    "Income & Expenditure Account, Receipts and Payments) over rounded figures cited in narrative paragraphs "
+    "of the Trustees' Report. If a formal Profit & Loss or SOFA table provides exact figures with pence "
+    "(e.g., Total Income 143,120.55 / Total Expense 108,294.79) and narrative text cites rounded figures "
+    "(e.g., £140,265 / £108,111), you MUST extract the figure from the formal financial table. "
+    "Furthermore, NEVER confuse intermediate category subtotals of expenditure (such as the subtotal for "
+    "'Charitable activities' alone) with the final consolidated 'Total expenditure' / 'Total resources expended' "
+    "line (which sums Raising funds + Charitable activities + Trading/Other activities).\n"
+    "2. REGRA 2 (Escala de Milhares e Ruído de OCR / Thousands Scale & OCR Noise): Scanned reports frequently "
+    "contain OCR errors where the pound symbol '£' appears as 'F', 'f', or '5'. Table headers such as "
+    "'£000', '£'000', 'F000's', 'f000's', or '5000's' mean the table numbers are stated in thousands of pounds "
+    "and MUST be multiplied by 1000 (e.g., '10,348' under column 'F000's' = 10348000.00; '9,415' under "
+    "'F000's' = 9415000.00). Likewise, figures in text such as '510,348,000' (when compared to '510,204,000') "
+    "have the leading '5' as an OCR misread of the '£' symbol (£10,348,000 = 10348000.00).\n"
+    "3. REGRA 3 (Fundos Totais e Período / Total Funds & Period): In tables with 'Restricted', 'Unrestricted', "
+    "and 'Total' columns, always extract the 'Total' column corresponding to the financial year of report_date."
+)
 
 
 def build_extraction_prompt(
@@ -57,13 +79,27 @@ def build_extraction_prompt(
     )
 
     prompt = (
-        "You are a deterministic financial auditing data extractor.\n"
-        "Your sole objective is to extract an exact accounting fact from the provided evidence chunks.\n\n"
-        "STRICT RULES:\n"
-        "1. Rely EXCLUSIVELY on the provided evidence chunks below.\n"
-        "2. Do NOT guess, extrapolate, interpolate, or calculate/sum values that are not explicitly stated in the text.\n"
-        "3. If the requested value is stated in thousands (e.g., '£150k' or '£ in thousands') or only partial figures exist without an explicit total, only extract if the exact absolute figure is unambiguous; otherwise set value_found to false.\n"
-        "4. If the metric is not explicitly present in the evidences, set value_found to false and extracted_value to null.\n\n"
+        "You are a deterministic UK charity financial auditing data extractor.\n"
+        "Your sole objective is to extract the exact accounting figure from the provided evidence chunks.\n\n"
+        "MANDATORY ACCOUNTING AUDITING RULES:\n"
+        "1. REGRA 1 (Hierarquia Contábil / Accounting Hierarchy): Always prioritize values extracted from formal "
+        "financial statement tables (Statement of Financial Activities / SOFA, Profit & Loss Statement, "
+        "Income & Expenditure Account, Receipts and Payments) over rounded numbers cited in narrative paragraphs "
+        "of the Trustees' Report. If there is a Profit & Loss / SOFA table with exact pence (e.g., Total Income "
+        "143,120.55 / Total Expense 108,294.79) and narrative text with rounded figures (e.g., £140,265 / £108,111), "
+        "you MUST extract the value from the formal table. NEVER confuse intermediate expenditure category subtotals "
+        "(such as the subtotal for 'Charitable activities' alone) with the final consolidated 'Total expenditure' / "
+        "'Total resources expended' line (which sums Raising funds + Charitable activities + Trading/Other activities).\n"
+        "2. REGRA 2 (Escala de Milhares e Ruído de OCR / Thousands Scale & OCR Noise): Scanned reports frequently "
+        "exhibit OCR errors where the symbol '£' appears as 'F', 'f', or '5'. Table headers such as '£000', "
+        "'£'000', 'F000's', 'f000's', or '5000's' mean the numbers in the table are in thousands of pounds "
+        "and MUST be multiplied by 1000 (e.g., '10,348' under column 'F000's' = 10348000.00; '9,415' under "
+        "'F000's' = 9415000.00). Similarly, figures in text like '510,348,000' (compared to '510,204,000') "
+        "have the leading '5' as an OCR error for the '£' symbol (£10,348,000 = 10348000.00).\n"
+        "3. REGRA 3 (Fundos Totais e Período / Total Funds & Period): In tables with 'Restricted', 'Unrestricted', "
+        "and 'Total' columns, always extract the 'Total' column corresponding to the financial year of report_date.\n"
+        "4. Rely EXCLUSIVELY on the provided evidence chunks. Do NOT invent or sum partial line items if no total is reported. "
+        "If the target metric is not present in the evidences, set value_found to false and extracted_value to null.\n\n"
         "TARGET CONTEXT:\n"
         f"- Document ID: {task.document_id}\n"
         f"- Charity Name: {charity_display}\n"
@@ -135,10 +171,7 @@ def extract_value_with_llm(prompt: str) -> ExtractionResult:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a precise financial data extraction assistant that outputs "
-                        "strictly valid JSON matching the requested schema."
-                    ),
+                    "content": SYSTEM_AUDITING_PROMPT,
                 },
                 {
                     "role": "user",

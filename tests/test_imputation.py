@@ -78,8 +78,8 @@ def test_extraction_result_invalid_currency_and_confidence_bounds() -> None:
 # ===========================================================================
 
 
-def test_build_extraction_prompt_includes_metadata_and_page_references() -> None:
-    """Deve injetar charity_name, report_date, target_column e evidências com [Page X]."""
+def test_build_extraction_prompt_includes_metadata_auditing_rules_and_page_references() -> None:
+    """Deve injetar charity_name, report_date, target_column, as 3 regras contábeis e evidências com [Page X]."""
     task = ImputationTask(
         row_id=42,
         document_id="charity_42.pdf",
@@ -112,6 +112,15 @@ def test_build_extraction_prompt_includes_metadata_and_page_references() -> None
     assert "[Page 3]" in prompt
     assert "Total income £2,450,000." in prompt
     assert "[Page 7]" in prompt
+    assert "REGRA 1" in prompt
+    assert "143,120.55" in prompt
+    assert "Charitable activities" in prompt
+    assert "Total expenditure" in prompt
+    assert "REGRA 2" in prompt
+    assert "F000's" in prompt
+    assert "510,348,000" in prompt
+    assert "REGRA 3" in prompt
+    assert "Unrestricted" in prompt
     assert "value_found" in prompt
     assert "extracted_value" in prompt
 
@@ -124,7 +133,7 @@ def test_build_extraction_prompt_includes_metadata_and_page_references() -> None
 def test_extract_value_with_llm_valid_json(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Deve chamar o cliente OpenAI/DeepSeek com temperature=0.0 e json_object e validar o retorno."""
+    """Deve chamar o cliente OpenAI/DeepSeek com temperature=0.0, json_object e system prompt contábil."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-key")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-chat")
@@ -158,6 +167,10 @@ def test_extract_value_with_llm_valid_json(
     assert call_kwargs["model"] == "deepseek-chat"
     assert call_kwargs["temperature"] == 0.0
     assert call_kwargs["response_format"] == {"type": "json_object"}
+    system_msg = call_kwargs["messages"][0]["content"]
+    assert "REGRA 1" in system_msg
+    assert "REGRA 2" in system_msg
+    assert "REGRA 3" in system_msg
 
     assert result.value_found is True
     assert result.extracted_value == 1250500.75
@@ -334,7 +347,7 @@ def test_update_dw_record_rejects_sql_injection_column() -> None:
 
 
 def test_run_imputation_pipeline_orchestration(mocker: MockerFixture) -> None:
-    """Deve orquestrar busca de tasks, retrieval de evidências, extração LLM e escrita no DW."""
+    """Deve orquestrar busca de tasks, retrieval de evidências (default top_k=12), extração LLM e escrita no DW."""
     task_1 = ImputationTask(
         row_id=1,
         document_id="doc_1.pdf",
@@ -377,7 +390,7 @@ def test_run_imputation_pipeline_orchestration(mocker: MockerFixture) -> None:
     ]
 
     # task_1 tem evidências e encontra valor; task_2 não tem evidências; task_3 tem evidências mas LLM retorna False
-    mocker.patch(
+    mock_fetch = mocker.patch(
         "src.imputation.pipeline.fetch_evidence",
         side_effect=[evidence_sample, [], evidence_sample],
     )
@@ -409,11 +422,12 @@ def test_run_imputation_pipeline_orchestration(mocker: MockerFixture) -> None:
     )
 
     dsn = "postgresql://postgres:secret@localhost:5432/evidence_db"
-    summary = run_imputation_pipeline(db_connection_string=dsn, top_k=5)
+    summary = run_imputation_pipeline(db_connection_string=dsn)
 
     assert summary == {
         "total_tasks": 3,
         "imputed_count": 1,
         "skipped_count": 2,
     }
+    assert mock_fetch.call_args.kwargs["top_k"] == 12
     assert mock_update.call_count == 2

@@ -96,7 +96,7 @@ def test_get_pending_tasks_invalid_dsn() -> None:
 def test_embed_search_query_formats_and_embeds_income_and_spending(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Deve formatar a query semântica combinando coluna, charity_name e report_date e retornar 1536 dims."""
+    """Deve formatar a query semântica com vocabulário contábil britânico explícito e retornar 1536 dims."""
     monkeypatch.setenv("EMBEDDING_API_KEY", "sk-test-retrieval-key")
     monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-small")
     monkeypatch.delenv("EMBEDDING_BASE_URL", raising=False)
@@ -127,7 +127,11 @@ def test_embed_search_query_formats_and_embeds_income_and_spending(
     call_kwargs = mock_client.embeddings.create.call_args.kwargs
     assert call_kwargs["model"] == "text-embedding-3-small"
     query_sent = call_kwargs["input"][0]
-    assert "income" in query_sent.lower()
+    assert (
+        "Statement of Financial Activities SOFA Profit and Loss Receipts and Payments "
+        "Total Income Total incoming resources Total gross income unrestricted restricted funds"
+        in query_sent
+    )
     assert "Age UK" in query_sent
     assert "2024-03-31" in query_sent
 
@@ -141,7 +145,11 @@ def test_embed_search_query_formats_and_embeds_income_and_spending(
     )
     embed_search_query(spending_task)
     spending_query_sent = mock_client.embeddings.create.call_args.kwargs["input"][0]
-    assert "spending" in spending_query_sent.lower()
+    assert (
+        "Statement of Financial Activities SOFA Profit and Loss Receipts and Payments "
+        "Total Expenditure Total Expense Total resources expended charitable activities"
+        in spending_query_sent
+    )
     assert "Age UK" in spending_query_sent
     assert "2024-03-31" in spending_query_sent
 
@@ -168,10 +176,10 @@ def test_embed_search_query_missing_api_key(
 # ===========================================================================
 
 
-def test_fetch_evidence_executes_hybrid_search_with_hard_filtering(
+def test_fetch_evidence_executes_hybrid_search_with_page_context_and_sorting(
     mocker: MockerFixture,
 ) -> None:
-    """Deve filtrar obrigatoriamente por document_id e ordenar por distância de cosseno (<=>)."""
+    """Deve usar top_k=12 por padrão, expandir página completa (chunks anteriores e posteriores) e ordenar por (page_number, chunk_index)."""
     mock_connect = mocker.patch("src.retrieval.search.psycopg2.connect")
     mock_register_vector = mocker.patch("src.retrieval.search.register_vector")
 
@@ -179,9 +187,11 @@ def test_fetch_evidence_executes_hybrid_search_with_hard_filtering(
     mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
 
     doc_id = "1ada336f29e8247f9f55a8d7e1b1c0da.pdf"
+    # Simula expansão de página completa (página 23 trazendo Chunk 102 selecionado e Chunk 103 posterior da mesma página)
     mock_cursor.fetchall.return_value = [
-        (doc_id, 4, 12, "Total incoming resources: £1,250,000", 0.9123),
-        (doc_id, 5, 15, "Total resources expended: £1,100,000", 0.8450),
+        (doc_id, 23, 103, "Total expenditure: 9,415", 0.0),
+        (doc_id, 23, 102, "Statement of Financial Activities (F000's) - Charitable activities: 5,882", 0.9123),
+        (doc_id, 5, 15, "Narrative summary", 0.8450),
     ]
 
     task = ImputationTask(
@@ -194,11 +204,11 @@ def test_fetch_evidence_executes_hybrid_search_with_hard_filtering(
     query_vec = [0.1] * 1536
     dsn = "postgresql://postgres:secret@localhost:5432/evidence_db"
 
+    # Chama sem passar top_k para testar o default top_k=12
     evidences = fetch_evidence(
         task=task,
         query_embedding=query_vec,
         db_connection_string=dsn,
-        top_k=5,
     )
 
     mock_connect.assert_called_once_with(dsn)
@@ -210,22 +220,38 @@ def test_fetch_evidence_executes_hybrid_search_with_hard_filtering(
     assert "1 - (embedding <=> %s::vector) AS similarity_score" in executed_sql
     assert "ORDER BY embedding <=> %s::vector" in executed_sql
     assert "LIMIT %s" in executed_sql
-    assert executed_params == (query_vec, doc_id, query_vec, 5)
+    assert "JOIN matched_pages mp" in executed_sql
+    assert "kb.page_number = mp.page_number" in executed_sql
+    assert "ORDER BY kb.page_number ASC, kb.chunk_index ASC" in executed_sql
+    assert executed_params == (query_vec, doc_id, query_vec, 12)
 
-    assert len(evidences) == 2
+    assert len(evidences) == 3
+    # Verifica ordenação estrita por (page_number, chunk_index)
+    assert [(ev.page_number, ev.chunk_index) for ev in evidences] == [
+        (5, 15),
+        (23, 102),
+        (23, 103),
+    ]
     assert evidences[0] == RetrievedEvidence(
-        document_id=doc_id,
-        page_number=4,
-        chunk_index=12,
-        text_content="Total incoming resources: £1,250,000",
-        similarity_score=0.9123,
-    )
-    assert evidences[1] == RetrievedEvidence(
         document_id=doc_id,
         page_number=5,
         chunk_index=15,
-        text_content="Total resources expended: £1,100,000",
+        text_content="Narrative summary",
         similarity_score=0.8450,
+    )
+    assert evidences[1] == RetrievedEvidence(
+        document_id=doc_id,
+        page_number=23,
+        chunk_index=102,
+        text_content="Statement of Financial Activities (F000's) - Charitable activities: 5,882",
+        similarity_score=0.9123,
+    )
+    assert evidences[2] == RetrievedEvidence(
+        document_id=doc_id,
+        page_number=23,
+        chunk_index=103,
+        text_content="Total expenditure: 9,415",
+        similarity_score=0.0,
     )
 
 

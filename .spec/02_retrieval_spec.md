@@ -41,15 +41,19 @@ A IA deve implementar o fluxo principal em `src/retrieval/` (ex: `models.py`, `s
 
 2. **Geração da Query Semântica:**
    `def embed_search_query(task: ImputationTask) -> list[float]:`
-   * *Regra:* Construir uma string de busca semântica rica combinando `task.target_column`, `task.charity_name` e `task.report_date` (ex: *"Total annual income in British pounds (£) financial statement for charity {charity_name} for report period ending {report_date}"* para receita, ou equivalente para despesa/spending) e gerar o vetor de 1536 dimensões via API da OpenAI.
+   * *Regra:* Construir uma string de busca semântica rica combinando `task.target_column`, `task.charity_name`, `task.report_date` e vocabulário contábil britânico explícito:
+     * Para `income_annually_in_british_pounds`: incluir `"Statement of Financial Activities SOFA Profit and Loss Receipts and Payments Total Income Total incoming resources Total gross income unrestricted restricted funds"`.
+     * Para `spending_annually_in_british_pounds`: incluir `"Statement of Financial Activities SOFA Profit and Loss Receipts and Payments Total Expenditure Total Expense Total resources expended charitable activities"`.
+   * Gerar o vetor de 1536 dimensões via API da OpenAI.
 
-3. **Busca Híbrida (SQL Bruto):**
-   `def fetch_evidence(task: ImputationTask, query_embedding: list[float], db_connection_string: str, top_k: int = 5) -> list[RetrievedEvidence]:`
-   * *Regra:* Executar a consulta no PostgreSQL filtrando por `document_id` e ordenando pela distância de cosseno:
-     `SELECT document_id, page_number, chunk_index, text_content, 1 - (embedding <=> %s::vector) AS similarity_score FROM knowledge_base WHERE document_id = %s ORDER BY embedding <=> %s::vector LIMIT %s`.
+3. **Busca Híbrida com Expansão de Página Completa / Full-Page Context Expansion (SQL Bruto):**
+   `def fetch_evidence(task: ImputationTask, query_embedding: list[float], db_connection_string: str, top_k: int = 12) -> list[RetrievedEvidence]:`
+   * *Regra:* Executar a consulta no PostgreSQL filtrando por `document_id` e selecionando os `top_k` (default: `12`) chunks mais similares pela distância de cosseno (`embedding <=> %s::vector`).
+   * *Expansão de Página Completa (Full-Page Context Expansion):* Para todas as páginas (`page_number`) presentes nos `top_k` fragmentos recuperados pela busca vetorial, buscar **todos** os fragmentos pertencentes àquelas mesmas páginas dentro do mesmo documento (tanto `chunk_index` anteriores quanto posteriores), garantindo que cabeçalhos de escala (ex: `£000` no início da página) e rodapés de totais consolidados (ex: `Total expenditure` no final da página) nunca sejam truncados.
+   * *Ordenação:* Retornar a lista final ordenada por `(page_number, chunk_index)`.
 
 ## 5. Critérios de Aceite (Definition of Done)
 1. **Tipagem e Pacotes:** 100% das funções tipadas (PEP 484), validadas via Pydantic e com `src/retrieval/__init__.py` exportando os contratos e funções principais.
 2. **Eficiência de Conexão:** Gerenciamento seguro de contexto (`with psycopg2.connect(...)`) garantindo fechamento de conexão e cursor.
 3. **Prevenção de Alucinação:** Se a query retornar zero chunks para um `document_id`, retornar lista vazia `[]` sem remover o filtro `WHERE document_id = %s`.
-4. **Testes Unitários:** Arquivo `tests/test_retrieval.py` usando `pytest` e `pytest-mock` cobrindo: (a) geração de 1 ou 2 tasks por linha com NULLs, (b) formatação e geração de embedding da query mockada, (c) execução da busca híbrida verificando se o `document_id` foi passado no SQL, e (d) retorno vazio quando o documento não possui chunks.
+4. **Testes Unitários:** Arquivo `tests/test_retrieval.py` usando `pytest` e `pytest-mock` cobrindo: (a) geração de 1 ou 2 tasks por linha com NULLs, (b) formatação com vocabulário contábil britânico e geração de embedding da query mockada, (c) execução da busca híbrida verificando `document_id`, `top_k=12` e ordenação por `(page_number, chunk_index)`, e (d) retorno vazio quando o documento não possui chunks.

@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 
 def run_imputation_pipeline(
     db_connection_string: str,
-    top_k: int = 5,
+    top_k: int = 12,
 ) -> dict[str, int]:
     """Orquestra o fluxo completo de busca de lacunas, recuperação de evidências e imputação via LLM.
 
     Args:
         db_connection_string: String de conexão (DSN/URI) para o PostgreSQL.
-        top_k: Quantidade máxima de chunks de evidência por tarefa (default: 5).
+        top_k: Quantidade máxima de chunks base de evidência por tarefa (default: 12).
 
     Returns:
         Dicionário resumo com {"total_tasks": int, "imputed_count": int, "skipped_count": int}.
