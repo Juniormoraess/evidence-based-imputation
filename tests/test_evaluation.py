@@ -217,6 +217,44 @@ def test_calculate_metrics_zero_division_protection() -> None:
         assert col_metric.fill_rate == 0.0
 
 
+def test_calculate_metrics_per_metric_lineage_completeness() -> None:
+    """Deve avaliar lineage_completeness individualmente por métrica imputada (income_* e spending_*)."""
+    df_truth = pd.DataFrame(
+        {
+            "document_id": ["doc_1.pdf", "doc_2.pdf"],
+            "income_annually_in_british_pounds": [1000.0, 2000.0],
+            "spending_annually_in_british_pounds": [800.0, 1500.0],
+        }
+    )
+
+    # 4 valores imputados no total (2 em doc_1 e 2 em doc_2):
+    # - doc_1 income: completo (página 10, quote presente)
+    # - doc_1 spending: completo (página 11, quote presente)
+    # - doc_2 income: completo (página 5, quote presente)
+    # - doc_2 spending: incompleto (spending_trecho_evidenciado vazio)
+    # -> 3 de 4 valores imputados possuem linhagem completa = 0.75
+    df_imputed = pd.DataFrame(
+        {
+            "document_id": ["doc_1.pdf", "doc_2.pdf"],
+            "income_annually_in_british_pounds": [1000.0, 2000.0],
+            "spending_annually_in_british_pounds": [800.0, 1500.0],
+            "income_pagina": [10, 5],
+            "income_trecho_evidenciado": ["Income £1,000", "Income £2,000"],
+            "income_confianca": [0.99, 0.95],
+            "spending_pagina": [11, 6],
+            "spending_trecho_evidenciado": ["Spending £800", "   "],
+            "spending_confianca": [0.98, 0.90],
+            "imputado_por_ia": [True, True],
+            "fonte_documento": ["doc_1.pdf", "doc_2.pdf"],
+            "pagina": [11, 6],
+            "trecho_evidenciado": ["Spending £800", "   "],
+        }
+    )
+
+    report, _ = calculate_metrics(df_truth=df_truth, df_imputed=df_imputed)
+    assert report.lineage_completeness == 0.75
+
+
 # ===========================================================================
 # 4. Testes de Exportação de Relatórios (export_reports)
 # ===========================================================================

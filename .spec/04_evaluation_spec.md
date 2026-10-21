@@ -47,7 +47,10 @@ A IA deve implementar o pipeline em `src/evaluation/` (ex: `models.py`, `metrics
    * *Regra:* Por padrão, `target_columns` deve ser `["income_annually_in_british_pounds", "spending_annually_in_british_pounds"]`.
    * Realizar `pd.merge` entre `df_truth` (sufixo `_truth`) e `df_imputed` (sufixo `_imputed`) pela chave `document_id`.
    * Para cada coluna alvo, criar no `df_merged` uma coluna booleana `<col>_is_match` aplicando `is_match_financial` e calcular `ColumnMetrics` arredondando taxas para 4 casas decimais.
-   * Calcular `lineage_completeness` verificando, dentre as linhas onde `imputado_por_ia == True`, qual proporção possui `fonte_documento`, `pagina` e `trecho_evidenciado` válidos. Se nenhuma linha tiver `imputado_por_ia == True`, retornar `0.0`.
+   * Calcular `lineage_completeness` verificando, dentre as linhas onde `imputado_por_ia == True`:
+     * Se as colunas de linhagem por métrica (`income_pagina`, `income_trecho_evidenciado`, `spending_pagina`, `spending_trecho_evidenciado`) estiverem presentes no DataFrame, avaliar individualmente cada métrica financeira não-nula imputada na linha (exigindo `fonte_documento`, `<metrica>_pagina` e `<metrica>_trecho_evidenciado` válidos).
+     * Caso contrário (fallback de retrocompatibilidade para DataFrames legados), verificar qual proporção das linhas com `imputado_por_ia == True` possui `fonte_documento`, `pagina` e `trecho_evidenciado` válidos.
+     * Se nenhuma linha tiver `imputado_por_ia == True` (ou nenhum valor imputado), retornar `0.0`.
    * Retornar a tupla `(EvaluationReport, df_merged)`.
 
 4. **Geração de Artefatos:**

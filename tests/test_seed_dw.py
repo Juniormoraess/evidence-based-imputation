@@ -142,6 +142,12 @@ def test_seed_dw_table_with_truncate_and_nan_conversion(mocker: MockerFixture) -
     assert "ON CONFLICT (document_id) DO UPDATE" in second_sql
     assert "income_annually_in_british_pounds = NULL" in second_sql
     assert "spending_annually_in_british_pounds = NULL" in second_sql
+    assert "income_pagina = NULL" in second_sql
+    assert "income_trecho_evidenciado = NULL" in second_sql
+    assert "income_confianca = NULL" in second_sql
+    assert "spending_pagina = NULL" in second_sql
+    assert "spending_trecho_evidenciado = NULL" in second_sql
+    assert "spending_confianca = NULL" in second_sql
     assert "imputado_por_ia = FALSE" in second_sql
     assert second_params == (
         "doc_1.pdf",

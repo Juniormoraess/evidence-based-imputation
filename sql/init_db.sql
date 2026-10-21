@@ -60,7 +60,17 @@ CREATE TABLE IF NOT EXISTS dw_charity_data (
     spending_annually_in_british_pounds NUMERIC(15, 2),
 
     -- ==========================================
-    -- COLUNAS DE LINHAGEM E AUDITORIA
+    -- COLUNAS DE LINHAGEM E AUDITORIA POR MÉTRICA
+    -- ==========================================
+    income_pagina INTEGER,
+    income_trecho_evidenciado TEXT,
+    income_confianca NUMERIC(5,4),
+    spending_pagina INTEGER,
+    spending_trecho_evidenciado TEXT,
+    spending_confianca NUMERIC(5,4),
+
+    -- ==========================================
+    -- COLUNAS DE LINHAGEM E AUDITORIA GERAIS (RETROCOMPATIBILIDADE)
     -- ==========================================
     imputado_por_ia BOOLEAN DEFAULT FALSE,
     fonte_documento VARCHAR(255),       -- Confirma o documento lido (Redundância de segurança)

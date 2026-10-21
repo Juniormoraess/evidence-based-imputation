@@ -9,6 +9,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from src.imputation import (
+    COLUMN_LINEAGE_MAP,
     ExtractionResult,
     build_extraction_prompt,
     extract_value_with_llm,
@@ -272,15 +273,97 @@ def test_update_dw_record_when_value_found_true(mocker: MockerFixture) -> None:
 
     query_obj, params = mock_cursor.execute.call_args.args
     assert isinstance(query_obj, sql.Composed)
+    assert sql.Identifier("income_annually_in_british_pounds") in query_obj._wrapped
+    assert sql.Identifier("income_pagina") in query_obj._wrapped
+    assert sql.Identifier("income_trecho_evidenciado") in query_obj._wrapped
+    assert sql.Identifier("income_confianca") in query_obj._wrapped
+    assert sql.Identifier("spending_pagina") not in query_obj._wrapped
     assert params == (
         750000.00,
-        "doc_15.pdf",
-        6,  # Fallback para evidences[0].page_number
-        "Total income for the year ended 31 March 2024 was £750,000.",
-        0.94,
-        15,
+        6,  # income_pagina (fallback para evidences[0].page_number)
+        "Total income for the year ended 31 March 2024 was £750,000.",  # income_trecho_evidenciado
+        0.94,  # income_confianca
+        "doc_15.pdf",  # fonte_documento
+        6,  # pagina (retrocompatibilidade)
+        "Total income for the year ended 31 March 2024 was £750,000.",  # trecho_evidenciado
+        0.94,  # confianca
+        15,  # row_id
     )
     mock_conn.commit.assert_called_once()
+
+
+def test_update_dw_record_separate_lineage_for_income_and_spending(
+    mocker: MockerFixture,
+) -> None:
+    """Deve atualizar income_* e spending_* separadamente sem que spending sobrescreva income_*."""
+    mock_connect = mocker.patch("src.imputation.writer.psycopg2.connect")
+    mock_conn = mock_connect.return_value.__enter__.return_value
+    mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+
+    assert COLUMN_LINEAGE_MAP["income_annually_in_british_pounds"] == (
+        "income_pagina",
+        "income_trecho_evidenciado",
+        "income_confianca",
+    )
+    assert COLUMN_LINEAGE_MAP["spending_annually_in_british_pounds"] == (
+        "spending_pagina",
+        "spending_trecho_evidenciado",
+        "spending_confianca",
+    )
+
+    dsn = "postgresql://postgres:secret@localhost:5432/evidence_db"
+
+    # 1. Atualização de Income (página 14)
+    income_task = ImputationTask(
+        row_id=20,
+        document_id="doc_20.pdf",
+        charity_name="Charity Twenty",
+        report_date="2024-03-31",
+        target_column="income_annually_in_british_pounds",
+    )
+    income_result = ExtractionResult(
+        value_found=True,
+        extracted_value=143120.55,
+        source_page=14,
+        exact_quote="Total Income 143,120.55",
+        reasoning="Tabela Profit & Loss na página 14.",
+        confidence_score=0.99,
+    )
+    update_dw_record(income_task, income_result, [], dsn)
+
+    # 2. Atualização de Spending (página 15) na mesma linha row_id=20
+    spending_task = ImputationTask(
+        row_id=20,
+        document_id="doc_20.pdf",
+        charity_name="Charity Twenty",
+        report_date="2024-03-31",
+        target_column="spending_annually_in_british_pounds",
+    )
+    spending_result = ExtractionResult(
+        value_found=True,
+        extracted_value=108294.79,
+        source_page=15,
+        exact_quote="Total Expense 108,294.79",
+        reasoning="Tabela Profit & Loss na página 15.",
+        confidence_score=0.97,
+    )
+    update_dw_record(spending_task, spending_result, [], dsn)
+
+    assert mock_cursor.execute.call_count == 2
+
+    income_query, income_params = mock_cursor.execute.call_args_list[0].args
+    assert sql.Identifier("income_pagina") in income_query._wrapped
+    assert sql.Identifier("income_trecho_evidenciado") in income_query._wrapped
+    assert sql.Identifier("income_confianca") in income_query._wrapped
+    assert sql.Identifier("spending_pagina") not in income_query._wrapped
+    assert income_params[:4] == (143120.55, 14, "Total Income 143,120.55", 0.99)
+
+    spending_query, spending_params = mock_cursor.execute.call_args_list[1].args
+    assert sql.Identifier("spending_pagina") in spending_query._wrapped
+    assert sql.Identifier("spending_trecho_evidenciado") in spending_query._wrapped
+    assert sql.Identifier("spending_confianca") in spending_query._wrapped
+    assert sql.Identifier("income_pagina") not in spending_query._wrapped
+    assert spending_params[:4] == (108294.79, 15, "Total Expense 108,294.79", 0.97)
 
 
 def test_update_dw_record_when_value_found_false_does_not_write(

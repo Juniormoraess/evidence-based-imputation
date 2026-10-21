@@ -10,12 +10,20 @@ from src.retrieval.models import ImputationTask, RetrievedEvidence
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_TARGET_COLUMNS: frozenset[str] = frozenset(
-    {
-        "income_annually_in_british_pounds",
-        "spending_annually_in_british_pounds",
-    }
-)
+COLUMN_LINEAGE_MAP: dict[str, tuple[str, str, str]] = {
+    "income_annually_in_british_pounds": (
+        "income_pagina",
+        "income_trecho_evidenciado",
+        "income_confianca",
+    ),
+    "spending_annually_in_british_pounds": (
+        "spending_pagina",
+        "spending_trecho_evidenciado",
+        "spending_confianca",
+    ),
+}
+
+ALLOWED_TARGET_COLUMNS: frozenset[str] = frozenset(COLUMN_LINEAGE_MAP.keys())
 
 
 def update_dw_record(
@@ -25,6 +33,9 @@ def update_dw_record(
     db_connection_string: str,
 ) -> bool:
     """Atualiza a coluna alvo e as colunas de auditoria/linhagem na tabela dw_charity_data.
+
+    Atualiza tanto as colunas de linhagem específicas da métrica (income_* ou spending_*)
+    quanto as colunas gerais de auditoria para retrocompatibilidade.
 
     Args:
         task: Tarefa de imputação contendo row_id, document_id e target_column.
@@ -63,10 +74,15 @@ def update_dw_record(
     if determined_page is None and evidences:
         determined_page = evidences[0].page_number
 
+    metric_page_col, metric_quote_col, metric_conf_col = COLUMN_LINEAGE_MAP[task.target_column]
+
     update_query = sql.SQL(
         """
         UPDATE dw_charity_data
         SET {target_col} = %s,
+            {metric_page_col} = %s,
+            {metric_quote_col} = %s,
+            {metric_conf_col} = %s,
             imputado_por_ia = TRUE,
             fonte_documento = %s,
             pagina = %s,
@@ -75,7 +91,12 @@ def update_dw_record(
             data_imputacao = CURRENT_TIMESTAMP
         WHERE id = %s
         """
-    ).format(target_col=sql.Identifier(task.target_column))
+    ).format(
+        target_col=sql.Identifier(task.target_column),
+        metric_page_col=sql.Identifier(metric_page_col),
+        metric_quote_col=sql.Identifier(metric_quote_col),
+        metric_conf_col=sql.Identifier(metric_conf_col),
+    )
 
     try:
         with psycopg2.connect(db_connection_string) as conn:
@@ -84,6 +105,9 @@ def update_dw_record(
                     update_query,
                     (
                         result.extracted_value,
+                        determined_page,
+                        result.exact_quote,
+                        result.confidence_score,
                         task.document_id,
                         determined_page,
                         result.exact_quote,

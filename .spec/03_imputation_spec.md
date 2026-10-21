@@ -46,18 +46,23 @@ A IA deve implementar as funções em `src/imputation/` (ex: `models.py`, `llm_c
    * *Regra:* Invocar o cliente OpenAI configurado para o DeepSeek reforçando no `system` prompt as regras de auditoria contábil e validar a resposta com `ExtractionResult.model_validate_json()`.
    * *Programação Defensiva:* Se a API falhar, retornar JSON malformado ou ocorrer `ValidationError`, registrar o erro via `logging` e retornar um `ExtractionResult` seguro com `value_found=False, extracted_value=None, source_page=None, exact_quote=None, reasoning="LLM parsing or API error", confidence_score=0.0`.
 
-3. **Escrita no Data Warehouse (Auditabilidade):**
+3. **Escrita no Data Warehouse (Auditabilidade e Linhagem por Métrica):**
    `def update_dw_record(task: ImputationTask, result: ExtractionResult, evidences: list[RetrievedEvidence], db_connection_string: str) -> bool:`
+   * *Mapeamento de Linhagem (`COLUMN_LINEAGE_MAP`):*
+     * `income_annually_in_british_pounds` -> `("income_pagina", "income_trecho_evidenciado", "income_confianca")`
+     * `spending_annually_in_british_pounds` -> `("spending_pagina", "spending_trecho_evidenciado", "spending_confianca")`
    * *Regra:*
      * Se `not result.value_found` ou `result.extracted_value is None`, **não** executar `UPDATE` na coluna financeira (mantendo `NULL` no banco), apenas registrar log e retornar `False`.
-     * Se `result.value_found` for `True` e houver `extracted_value`, determinar a página final (`result.source_page` se presente, caso contrário `evidences[0].page_number` como fallback) e executar `UPDATE dw_charity_data` na linha `WHERE id = task.row_id`, atualizando:
+     * Se `result.value_found` for `True` e houver `extracted_value`, determinar a página final (`result.source_page` se presente, caso contrário `evidences[0].page_number` como fallback) e executar `UPDATE dw_charity_data` na linha `WHERE id = task.row_id` usando `psycopg2.sql.Identifier`, atualizando:
        * A coluna dinâmica `task.target_column = result.extracted_value`
-       * `imputado_por_ia = TRUE`
-       * `fonte_documento = task.document_id`
-       * `pagina = pagina_determinada`
-       * `trecho_evidenciado = result.exact_quote`
-       * `confianca = result.confidence_score`
-       * `data_imputacao = CURRENT_TIMESTAMP`
+       * As colunas de linhagem específicas da métrica (`income_pagina`/`spending_pagina`, `income_trecho_evidenciado`/`spending_trecho_evidenciado`, `income_confianca`/`spending_confianca`)
+       * As colunas gerais de auditoria para retrocompatibilidade:
+         * `imputado_por_ia = TRUE`
+         * `fonte_documento = task.document_id`
+         * `pagina = pagina_determinada`
+         * `trecho_evidenciado = result.exact_quote`
+         * `confianca = result.confidence_score`
+         * `data_imputacao = CURRENT_TIMESTAMP`
      * Retornar `True` quando o registro for atualizado com sucesso.
 
 4. **Orquestração do Pipeline de Imputação:**

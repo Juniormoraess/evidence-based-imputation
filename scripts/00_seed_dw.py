@@ -50,6 +50,12 @@ UPSERT_DW_SQL = """
         report_date,
         income_annually_in_british_pounds,
         spending_annually_in_british_pounds,
+        income_pagina,
+        income_trecho_evidenciado,
+        income_confianca,
+        spending_pagina,
+        spending_trecho_evidenciado,
+        spending_confianca,
         imputado_por_ia,
         fonte_documento,
         pagina,
@@ -57,7 +63,13 @@ UPSERT_DW_SQL = """
         confianca,
         data_imputacao
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, NULL, FALSE, NULL, NULL, NULL, NULL, NULL)
+    VALUES (
+        %s, %s, %s, %s, %s, %s, %s,
+        NULL, NULL,
+        NULL, NULL, NULL,
+        NULL, NULL, NULL,
+        FALSE, NULL, NULL, NULL, NULL, NULL
+    )
     ON CONFLICT (document_id) DO UPDATE SET
         charity_name = EXCLUDED.charity_name,
         charity_number = EXCLUDED.charity_number,
@@ -67,6 +79,12 @@ UPSERT_DW_SQL = """
         report_date = EXCLUDED.report_date,
         income_annually_in_british_pounds = NULL,
         spending_annually_in_british_pounds = NULL,
+        income_pagina = NULL,
+        income_trecho_evidenciado = NULL,
+        income_confianca = NULL,
+        spending_pagina = NULL,
+        spending_trecho_evidenciado = NULL,
+        spending_confianca = NULL,
         imputado_por_ia = FALSE,
         fonte_documento = NULL,
         pagina = NULL,

@@ -15,6 +15,17 @@ DEFAULT_TARGET_COLUMNS: list[str] = [
     "spending_annually_in_british_pounds",
 ]
 
+METRIC_LINEAGE_COLUMNS: dict[str, tuple[str, str]] = {
+    "income_annually_in_british_pounds": (
+        "income_pagina",
+        "income_trecho_evidenciado",
+    ),
+    "spending_annually_in_british_pounds": (
+        "spending_pagina",
+        "spending_trecho_evidenciado",
+    ),
+}
+
 
 def _normalize_document_id(value: object) -> str:
     """Normaliza o identificador do documento removendo espaços e garantindo o sufixo .pdf."""
@@ -141,14 +152,28 @@ def _is_non_empty_field(value: object) -> bool:
     return bool(str(value).strip())
 
 
-def _calculate_lineage_completeness(df_merged: pd.DataFrame) -> float:
-    """Calcula a proporção de registros com imputado_por_ia == True que possuem linhagem completa."""
-    ia_col = (
-        "imputado_por_ia_imputed"
-        if "imputado_por_ia_imputed" in df_merged.columns
-        else "imputado_por_ia"
-    )
-    if ia_col not in df_merged.columns or df_merged.empty:
+def _resolve_merged_col(df: pd.DataFrame, base_col: str) -> str | None:
+    """Resolve o nome da coluna no DataFrame após o merge (priorizando sufixo _imputed)."""
+    imputed_variant = f"{base_col}_imputed"
+    if imputed_variant in df.columns:
+        return imputed_variant
+    if base_col in df.columns:
+        return base_col
+    return None
+
+
+def _calculate_lineage_completeness(
+    df_merged: pd.DataFrame,
+    target_columns: list[str] | None = None,
+) -> float:
+    """Calcula a proporção de valores/registros imputados com linhagem completa.
+
+    Se as colunas de linhagem por métrica (income_*, spending_*) estiverem presentes no DataFrame,
+    avalia a completude individualmente para cada valor não-nulo imputado nas colunas alvo.
+    Caso contrário, utiliza fallback para as colunas legadas (pagina e trecho_evidenciado).
+    """
+    ia_col = _resolve_merged_col(df_merged, "imputado_por_ia")
+    if ia_col is None or df_merged.empty:
         return 0.0
 
     ia_mask = df_merged[ia_col].fillna(False).astype(bool)
@@ -156,21 +181,57 @@ def _calculate_lineage_completeness(df_merged: pd.DataFrame) -> float:
     if df_ia.empty:
         return 0.0
 
-    source_col = (
-        "fonte_documento_imputed"
-        if "fonte_documento_imputed" in df_ia.columns
-        else "fonte_documento"
-    )
-    page_col = "pagina_imputed" if "pagina_imputed" in df_ia.columns else "pagina"
-    quote_col = (
-        "trecho_evidenciado_imputed"
-        if "trecho_evidenciado_imputed" in df_ia.columns
-        else "trecho_evidenciado"
+    source_col = _resolve_merged_col(df_ia, "fonte_documento")
+    if source_col is None:
+        return 0.0
+
+    columns_to_check = (
+        list(target_columns) if target_columns is not None else list(DEFAULT_TARGET_COLUMNS)
     )
 
-    for required_col in (source_col, page_col, quote_col):
-        if required_col not in df_ia.columns:
+    # Verifica se o DataFrame possui as colunas de linhagem específicas por métrica
+    has_metric_lineage_cols = any(
+        _resolve_merged_col(df_ia, page_base) is not None
+        and _resolve_merged_col(df_ia, quote_base) is not None
+        for col in columns_to_check
+        if col in METRIC_LINEAGE_COLUMNS
+        for page_base, quote_base in [METRIC_LINEAGE_COLUMNS[col]]
+    )
+
+    if has_metric_lineage_cols:
+        total_imputed_values = 0
+        complete_imputed_values = 0
+
+        for _, row in df_ia.iterrows():
+            has_source = _is_non_empty_field(row[source_col])
+
+            for col in columns_to_check:
+                if col not in METRIC_LINEAGE_COLUMNS:
+                    continue
+                val_col = _resolve_merged_col(df_ia, col)
+                page_base, quote_base = METRIC_LINEAGE_COLUMNS[col]
+                m_page_col = _resolve_merged_col(df_ia, page_base)
+                m_quote_col = _resolve_merged_col(df_ia, quote_base)
+
+                if val_col is None or m_page_col is None or m_quote_col is None:
+                    continue
+
+                if not pd.isna(row[val_col]):
+                    total_imputed_values += 1
+                    has_page = _is_non_empty_field(row[m_page_col])
+                    has_quote = _is_non_empty_field(row[m_quote_col])
+                    if has_source and has_page and has_quote:
+                        complete_imputed_values += 1
+
+        if total_imputed_values == 0:
             return 0.0
+        return round(complete_imputed_values / total_imputed_values, 4)
+
+    # Fallback de retrocompatibilidade para colunas legadas (pagina, trecho_evidenciado)
+    page_col = _resolve_merged_col(df_ia, "pagina")
+    quote_col = _resolve_merged_col(df_ia, "trecho_evidenciado")
+    if page_col is None or quote_col is None:
+        return 0.0
 
     complete_count = 0
     for _, row in df_ia.iterrows():
@@ -273,7 +334,7 @@ def calculate_metrics(
             )
         )
 
-    lineage_completeness = _calculate_lineage_completeness(df_merged)
+    lineage_completeness = _calculate_lineage_completeness(df_merged, columns_to_evaluate)
 
     report = EvaluationReport(
         total_documents_evaluated=len(df_merged),
